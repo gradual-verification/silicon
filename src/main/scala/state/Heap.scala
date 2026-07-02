@@ -7,12 +7,16 @@
 package viper.silicon.state
 
 import viper.silicon.interfaces.state.Chunk
+import viper.silicon.interfaces.state.GeneralChunk
+import viper.silicon.interfaces.state.NonQuantifiedChunk
+import viper.silicon.state.terms.Term
 
 trait Heap {
   def values: Iterable[Chunk]
   def +(chunk: Chunk): Heap
   def +(other: Heap): Heap
   def -(chunk: Chunk): Heap
+  def chunkWithSnapExists(snap: Term): Boolean
 }
 
 trait HeapFactory[H <: Heap] {
@@ -38,4 +42,10 @@ final class ListBackedHeap private[state] (chunks: Vector[Chunk])
 
     new ListBackedHeap(prefix ++ suffix.tail)
   }
+
+  def chunkWithSnapExists(snap: Term): Boolean =
+    chunks.exists {
+      case chunk: NonQuantifiedChunk => snap == chunk.snap
+      case _ => false // TODO quantified chunks
+    }
 }

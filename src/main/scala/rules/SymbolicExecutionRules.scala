@@ -8,6 +8,7 @@ package viper.silicon.rules
 
 import viper.silicon.debugger.DebugExp
 import viper.silicon.interfaces.{Failure, SiliconDebuggingFailureContext, SiliconFailureContext, SiliconMappedCounterexample, SiliconNativeCounterexample, SiliconVariableCounterexample}
+import viper.silicon.logger.records.data.ErrorRecord
 import viper.silicon.state.State
 import viper.silicon.state.terms.{False, Term}
 import viper.silicon.verifier.Verifier
@@ -44,6 +45,9 @@ trait SymbolicExecutionRules {
   }
 
   protected def createFailure(ve: VerificationError, v: Verifier, s: State, failedAssert: Term, failedAssertExp: Option[DebugExp], generateNewModel: Boolean): Failure = {
+    val sepIdentifier = v.symbExLog.openScope(new ErrorRecord(ve, s, v.decider.pcs))
+    v.symbExLog.populateSnaps(s.h.values.toSeq, s, ve.offendingNode)
+    v.symbExLog.closeScope(sepIdentifier)
     if (s.retryLevel == 0 && !ve.isExpected) v.errorsReportedSoFar.incrementAndGet()
     var ceTrafo: Option[CounterexampleTransformer] = None
     val res = ve match {

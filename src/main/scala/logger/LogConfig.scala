@@ -27,9 +27,20 @@ case class LogConfig(isBlackList: Boolean,
 
 object LogConfig {
   def default(): LogConfig = LogConfig(
-    isBlackList = true,
-    includeStore = false, includeHeap = false, includeOldHeap = false, includePcs = false,
-    List())
+    isBlackList = false,
+    includeStore = true, includeHeap = true, includeOldHeap = false, includePcs = true,
+    List(
+      RecordConfig("comment", None),
+      RecordConfig("conditional edge", None),
+      RecordConfig("end", None),
+      RecordConfig("execute", None),
+      RecordConfig("error", None),
+      RecordConfig("loop in", None),
+      RecordConfig("loop out", None),
+      RecordConfig("method call", None),
+      // branching records are always recorded
+      RecordConfig("joining", None)
+    ))
 }
 
 case class RecordConfig(kind: String, value: Option[String])

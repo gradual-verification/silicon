@@ -19,6 +19,9 @@ import viper.silver.verifier.reasons._
 import viper.silver.{ast, cfg}
 import viper.silicon.decider.RecordedPathConditions
 import viper.silicon.interfaces._
+import viper.silicon.logger.records.data.EndRecord
+import viper.silicon.logger.records.data.LoopInRecord
+import viper.silicon.logger.records.data.LoopOutRecord
 import viper.silicon.logger.records.data.{CommentRecord, ConditionalEdgeRecord, ExecuteRecord, MethodCallRecord}
 import viper.silicon.state._
 import viper.silicon.state.terms._
@@ -236,6 +239,8 @@ object executor extends ExecutionRules {
              *   - Execute the statements in the loop head block
              *   - Follow the outgoing edges
              */
+            val sepIdentifier = v.symbExLog.openScope(new LoopInRecord(invs.head, s, v.decider.pcs))
+            v.symbExLog.populateSnaps(s.h.values.toSeq, s, invs.head)
 
             /* Havoc local variables that are assigned to in the loop body */
             val wvs = s.methodCfg.writtenVars(block)
@@ -258,6 +263,7 @@ object executor extends ExecutionRules {
             (executionFlowController.locally(sBody, v)((s0, v0) => {
                 v0.decider.prover.comment("Loop head block: Check well-definedness of invariant")
                 val mark = v0.decider.setPathConditionMark()
+                v0.symbExLog.closeScope(sepIdentifier) // not sure if this is supposed to go here
                 produces(s0, freshSnap, invs, ContractNotWellformed, v0)((s1, v1) => {
                   phase1data = phase1data :+ (s1,
                                               v1.decider.pcs.after(mark),
@@ -302,8 +308,14 @@ object executor extends ExecutionRules {
              * attempting to re-establish the invariant.
              */
             v.decider.prover.comment("Loop head block: Re-establish invariant")
-            consumes(s, invs, false, e => LoopInvariantNotPreserved(e), v)((_, _, _) =>
-              Success())
+            val sepIdentifier = v.symbExLog.openScope(new LoopOutRecord(invs.head, s, v.decider.pcs))
+            v.symbExLog.populateSnaps(s.h.values.toSeq, s, invs.head)
+            consumes(s, invs, false, e => LoopInvariantNotPreserved(e), v)((s1, _, v1) => {
+              v1.symbExLog.closeScope(sepIdentifier)
+              val sepIdentifierEnd = v1.symbExLog.openScope(new EndRecord(s1, v1.decider.pcs))
+              v1.symbExLog.closeScope(sepIdentifierEnd)
+              Success()
+            })
         }
     }
   }
@@ -322,6 +334,7 @@ object executor extends ExecutionRules {
           (Q: (State, Verifier) => VerificationResult)
           : VerificationResult = {
     val sepIdentifier = v.symbExLog.openScope(new ExecuteRecord(stmt, s, v.decider.pcs))
+    v.symbExLog.populateSnaps(s.h.values.toSeq, s, stmt)
     exec2(s, stmt, v)((s1, v1) => {
       v1.symbExLog.closeScope(sepIdentifier)
       Q(s1, v1)})
