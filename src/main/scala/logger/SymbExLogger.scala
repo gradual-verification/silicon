@@ -27,8 +27,6 @@ import viper.silicon.{Config, Map, Stack}
 import viper.silver.ast
 import viper.silver.ast.TranslatedPosition
 import viper.silver.ast.{Exp, Member}
-import viper.silver.cfg.silver.SilverCfg
-import viper.silver.verifier.AbstractError
 
 import java.util.concurrent.atomic.AtomicInteger
 import scala.annotation.elidable
@@ -228,6 +226,8 @@ case object SymbExLogger {
         LogConfig.default()
     }
   }
+
+  val loggers: mutable.Map[MemberSymbExLogger, Unit] = TrieMap[MemberSymbExLogger, Unit]()
 }
 
 abstract class SymbExLogger[Log <: MemberSymbExLogger]() {
@@ -498,19 +498,19 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
   // - Method calls must occur in a separate assignment statement
 
   // TrieMaps are thread-safe
-  // fresh Vars starting with $t are globally unique, but we still need a map of maps to store each scope
-  // each scope is a tuple (method, stack of while loops)
-  val snaps: mutable.Map[(SilverCfg, Stack[Heap]), mutable.Map[Term, (BasicChunk, ast.Node)]] =
-    TrieMap[(SilverCfg, Stack[Heap]), mutable.Map[Term, (BasicChunk, ast.Node)]]()
+  // Fresh Vars starting with $t are globally unique, but we still need a map of maps to store each scope.
+  // Each scope is a stack of while loops.
+  val snaps: mutable.Map[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]] =
+    TrieMap[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]]()
   val freshTerms: mutable.Map[Term, Term] = TrieMap[Term, Term]()
   val ignoreSet: mutable.Map[Term, Boolean] = TrieMap[Term, Boolean]()
   // while loops are uniquely identified by their invariants, this is needed
   // to find the position of the while loops for displaying the state when
-  // entering and leaving the loop
+  // entering and leaving the loop.
   val whileLoops: mutable.Map[ast.Exp, ast.Stmt] = TrieMap[ast.Exp, ast.Stmt]()
 
   def snapsFor(state: State): mutable.Map[Term, (BasicChunk, ast.Node)] =
-    snaps((state.methodCfg, state.invariantContexts))
+    snaps(state.invariantContexts)
 
   def formatPosition(node: ast.Node): String = {
     val pos = node.asInstanceOf[ast.Positioned].pos
@@ -631,9 +631,9 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
   }
 
   def populateSnaps(chunks: Seq[Chunk], state: State, node: ast.Node): Unit = {
-    if (!snaps.contains((state.methodCfg, state.invariantContexts))) {
+    if (!snaps.contains(state.invariantContexts)) {
       // create a new snaps map for a scope we have not seen before
-      snaps += (state.methodCfg, state.invariantContexts) -> TrieMap[Term, (BasicChunk, ast.Node)]()
+      snaps += state.invariantContexts -> TrieMap[Term, (BasicChunk, ast.Node)]()
     }
     for (chunk <- chunks) {
       chunk match {
@@ -758,6 +758,8 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     ignoreSet.clear()
     whileLoops.clear()
   }
+
+  SymbExLogger.loggers += this -> ()
 }
 
 case object NoopMemberSymbExLog extends MemberSymbExLogger(null, null, null) {
