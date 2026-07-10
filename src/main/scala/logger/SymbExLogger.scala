@@ -227,6 +227,9 @@ case object SymbExLogger {
     }
   }
 
+  // This method exists because IntelliJ cannot find MemberSymbExLogger.main
+  def m(memberSymbExLogger: MemberSymbExLogger): MemberRecord = memberSymbExLogger.main
+
   val loggers: mutable.Map[MemberSymbExLogger, Unit] = TrieMap[MemberSymbExLogger, Unit]()
 }
 
