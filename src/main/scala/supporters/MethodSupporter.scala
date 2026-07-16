@@ -19,6 +19,7 @@ import viper.silicon.state.State.OldHeaps
 import viper.silicon.verifier.{Verifier, VerifierComponent}
 import viper.silicon.utils.freshSnap
 import viper.silicon.Map
+import viper.silicon.logger.records.data.EndRecord
 
 /* TODO: Consider changing the DefaultMethodVerificationUnitProvider into a SymbolicExecutionRule */
 
@@ -94,9 +95,13 @@ trait DefaultMethodVerificationUnitProvider extends VerifierComponent { v: Verif
                     Success()})})
             && {
                executionFlowController.locally(s2a, v2)((s3, v3) =>  {
-                  exec(s3, body, v3)((s4, v4) =>
+                  exec(s3, body, v3)((s4, v4) => {
+                    val sepIdentifier = v4.symbExLog.openScope(new EndRecord(s4, v4.decider.pcs))
+                    v4.symbExLog.populateSnaps(s4.h.values.toSeq, s, method)
+                    v4.symbExLog.closeScope(sepIdentifier)
                     consumes(s4, posts, false, postViolated, v4)((_, _, _) =>
-                      Success()))}) }  )})})
+                      Success())
+                  } )}) }  )})})
 
       v.decider.resetProverOptions()
 
