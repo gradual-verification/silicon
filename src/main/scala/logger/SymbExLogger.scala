@@ -586,12 +586,14 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case True => "true"
       case False => "false"
       case IntLiteral(n) => n.toString
+      case App(applicable, args) => applicable.id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
       case Plus(p0, p1) => "(" + formatTerm(p0, state) + " + " + formatTerm(p1, state) + ")"
       case Minus(p0, p1) => "(" + formatTerm(p0, state) + " - " + formatTerm(p1, state) + ")"
       case Times(p0, p1) => "(" + formatTerm(p0, state) + " * " + formatTerm(p1, state) + ")"
       case Div(p0, p1) => "(" + formatTerm(p0, state) + " / " + formatTerm(p1, state) + ")"
       case Mod(p0, p1) => "(" + formatTerm(p0, state) + " % " + formatTerm(p1, state) + ")"
       case BuiltinEquals(p0, p1) => "(" + formatTerm(p0, state) + " == " + formatTerm(p1, state) + ")"
+      case CustomEquals(p0, p1) => "(" + formatTerm(p0, state) + " === " + formatTerm(p1, state) + ")"
       case Less(p0, p1) => "(" + formatTerm(p0, state) + " < " + formatTerm(p1, state) + ")"
       case AtMost(p0, p1) => "(" + formatTerm(p0, state) + " <= " + formatTerm(p1, state) + ")"
       case Greater(p0, p1) => "(" + formatTerm(p0, state) + " > " + formatTerm(p1, state) + ")"
@@ -601,6 +603,19 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case Or(ts) => "(" + ts.map(formatTerm(_, state)).mkString(" || ") + ")"
       case And(ts) => "(" + ts.map(formatTerm(_, state)).mkString(" && ") + ")"
       case Implies(p0, p1) => "(" + formatTerm(p0, state) + " ==> " + formatTerm(p1, state) + ")"
+      case NoPerm => "0.0"
+      case FullPerm => "1.0"
+      case FractionPermLiteral(r) => r.numerator.toString + "/" + r.denominator.toString
+      case FractionPerm(n, d) => "(" + formatTerm(n, state) + "/" + formatTerm(d, state) + ")"
+      case PermLess(p0, p1) => "(" + formatTerm(p0, state) + " < " + formatTerm(p1, state) + ")"
+      case PermAtMost(p0, p1) => "(" + formatTerm(p0, state) + " <= " + formatTerm(p1, state) + ")"
+      case SeqRanged(p0, p1) => "[" + formatTerm(p0, state) + ".." + formatTerm(p1, state) + "]"
+      case SeqNil(elementsSort) => "nil"
+      case SeqSingleton(p) => "[" + formatTerm(p, state) + "]"
+      case SeqAppend(p0, p1) => "(" + formatTerm(p0, state) + " ++ " + formatTerm(p1, state) + ")"
+      case SeqLength(p) => "|" + formatTerm(p, state) + "|"
+      case SeqAt(p0, p1) => "(" + formatTerm(p0, state) + ")[" + formatTerm(p1, state) + "]"
+      case SeqIn(p0, p1) => "(" + formatTerm(p0, state) + " in " + formatTerm(p1, state) + ")"
       case _ => "\uD83E\uDD81" + term.toString + "\uD83E\uDD81" // HIC SUNT LEONES
     }
 
