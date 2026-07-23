@@ -527,7 +527,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
 
   def formatQVar(v: Var): String =
     v match {
-      case Var(SuffixedIdentifier(prefix, _, _), _, _) => prefix.name + " " + v.sort.toString
+      case Var(SuffixedIdentifier(prefix, _, _), sort, _) => prefix.name + " " + sort.toString
       case _ => v.id.name + " " + v.sort.toString
     }
 
@@ -592,7 +592,8 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case True => "true"
       case False => "false"
       case IntLiteral(n) => n.toString
-      case App(applicable, args) => applicable.id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")"
+      case App(HeapDepFun(id, argSorts, resultSort), args) => id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")"
+      case App(DomainFun(id, argSorts, resultSort), args) => id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
       case Quantification(Forall, vars, body, trigger, name, isGlobal, weight) =>
         "forall " + vars.map(formatQVar).mkString(", ") + " :: (" + formatTerm(body, state) + ")"
       case Plus(p0, p1) => "(" + formatTerm(p0, state) + " + " + formatTerm(p1, state) + ")"
@@ -641,13 +642,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     }
     basicChunk.resourceID match {
       case FieldID =>
-        val typeAndFieldName = basicChunk.id.name.split("\\$")
-        val fieldName = if (typeAndFieldName.length == 2) {
-          typeAndFieldName.last
-        } else {
-          "?"
-        }
-        val fieldAcc = formatTerm(basicChunk.args.head, state) + "->" + fieldName
+        val fieldAcc = formatTerm(basicChunk.args.head, state) + "." + basicChunk.id.name
         fieldAcc + s
       case PredicateID =>
         val argsAsString = basicChunk.args.map(formatTerm(_, state)).mkString(", ")
