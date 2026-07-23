@@ -525,6 +525,12 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     }
   }
 
+  def formatQVar(v: Var): String =
+    v match {
+      case Var(SuffixedIdentifier(prefix, _, _), _, _) => prefix.name + " " + v.sort.toString
+      case _ => v.id.name + " " + v.sort.toString
+    }
+
   def formatTerm(term: Term, state: State): String =
     term match {
       case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name == "$t" =>
@@ -586,7 +592,9 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case True => "true"
       case False => "false"
       case IntLiteral(n) => n.toString
-      case App(applicable, args) => applicable.id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
+      case App(applicable, args) => applicable.id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")"
+      case Quantification(Forall, vars, body, trigger, name, isGlobal, weight) =>
+        "forall " + vars.map(formatQVar).mkString(", ") + " :: (" + formatTerm(body, state) + ")"
       case Plus(p0, p1) => "(" + formatTerm(p0, state) + " + " + formatTerm(p1, state) + ")"
       case Minus(p0, p1) => "(" + formatTerm(p0, state) + " - " + formatTerm(p1, state) + ")"
       case Times(p0, p1) => "(" + formatTerm(p0, state) + " * " + formatTerm(p1, state) + ")"
