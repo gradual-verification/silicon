@@ -601,6 +601,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case Times(p0, p1) => "(" + formatTerm(p0, state) + " * " + formatTerm(p1, state) + ")"
       case Div(p0, p1) => "(" + formatTerm(p0, state) + " / " + formatTerm(p1, state) + ")"
       case Mod(p0, p1) => "(" + formatTerm(p0, state) + " % " + formatTerm(p1, state) + ")"
+      case Ite(p0, p1, p2) => "(" + formatTerm(p0, state) + " ? " + formatTerm(p1, state) + " : " + formatTerm(p2, state) + ")"
       case BuiltinEquals(p0, p1) => "(" + formatTerm(p0, state) + " == " + formatTerm(p1, state) + ")"
       case CustomEquals(p0, p1) => "(" + formatTerm(p0, state) + " === " + formatTerm(p1, state) + ")"
       case Less(p0, p1) => "(" + formatTerm(p0, state) + " < " + formatTerm(p1, state) + ")"
@@ -624,7 +625,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case SeqAppend(p0, p1) => "(" + formatTerm(p0, state) + " ++ " + formatTerm(p1, state) + ")"
       case SeqLength(p) => "|" + formatTerm(p, state) + "|"
       case SeqAt(p0, p1) => "(" + formatTerm(p0, state) + ")[" + formatTerm(p1, state) + "]"
-      case SeqIn(p0, p1) => "(" + formatTerm(p0, state) + " in " + formatTerm(p1, state) + ")"
+      case SeqIn(p0, p1) => "(" + formatTerm(p0, state) + " elem " + formatTerm(p1, state) + ")"
       case _ => "\uD83E\uDD81" + term.toString + "\uD83E\uDD81" // HIC SUNT LEONES
     }
 
@@ -706,7 +707,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       false
     } else {
       term match {
-        case App(_, _) => false
+        case App(app, _) => !app.id.name.endsWith("%trigger")
         case Combine(_, _) => false
         case First(_) => false
         case Second(_) => false
@@ -722,10 +723,9 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
         case Times(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case Div(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case Mod(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case BuiltinEquals(p0, p1) =>
-          // if latest version of variable or field access does not appear in PC, do not display it
-          (state.g.termExists(p0) || state.h.chunkWithSnapExists(p0)) && isPCVisible(p1, state) ||
-            isPCVisible(p0, state) && (state.g.termExists(p1) || state.h.chunkWithSnapExists(p1))
+        case Ite(p0, p1, p2) => isPCVisible(p0, state) && isPCVisible(p1, state) && isPCVisible(p2, state)
+        case BuiltinEquals(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+        case CustomEquals(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case Less(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case AtMost(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case Greater(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
@@ -739,8 +739,9 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     }
   }
 
-  def formatPCs(currentPCs: InsertionOrderedSet[Term], state: State): Seq[String] = {
-    currentPCs.filter(isPCVisible(_, state)).map(formatTerm(_, state) + "; ").toSeq
+  def formatPCs(previousPCs: InsertionOrderedSet[Term], currentPCs: InsertionOrderedSet[Term], state: State): Seq[String] = {
+    val addedPCs = for (aPC <- currentPCs if !previousPCs.contains(aPC)) yield aPC
+    addedPCs.filter(isPCVisible(_, state)).map(formatTerm(_, state) + "; ").toSeq
   }
 
   def populateWhileLoops(stmts: Seq[ast.Stmt]): Unit = {
