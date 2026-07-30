@@ -653,8 +653,10 @@ object executor extends ExecutionRules {
 
    private def ssaifyRhs(rhs: Term, rhsExp: ast.Exp, rhsExpNew: Option[ast.Exp], name: String, typ: ast.Type, v: Verifier, s : State): (Term, Option[ast.Exp]) = {
      rhs match {
-       case _: Var | _: Literal =>
-         (rhs, rhsExpNew)
+       // 2026-07-30 Long:
+       // Track assignments of vars and literals as well
+       // case _: Var | _: Literal =>
+       //   (rhs, rhsExpNew)
 
        case _  =>
          /* 2018-06-05 Malte:
@@ -679,6 +681,7 @@ object executor extends ExecutionRules {
             (None, None)
          }
          v.decider.assumeDefinition(BuiltinEquals(t, rhs), debugExp)
+         v.symbExLog.freshTerms += t -> rhs
          (t, eNew)
      }
    }

@@ -519,7 +519,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     val pos = node.asInstanceOf[ast.Positioned].pos
     pos match {
       case translatedPos: TranslatedPosition =>
-        "@" + translatedPos.line.toString
+        " line " + translatedPos.line.toString
       case _ =>
         ""
     }
@@ -617,8 +617,10 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case FullPerm => "1.0"
       case FractionPermLiteral(r) => r.numerator.toString + "/" + r.denominator.toString
       case FractionPerm(n, d) => "(" + formatTerm(n, state) + "/" + formatTerm(d, state) + ")"
-      case PermLess(p0, p1) => "(" + formatTerm(p0, state) + " < " + formatTerm(p1, state) + ")"
-      case PermAtMost(p0, p1) => "(" + formatTerm(p0, state) + " <= " + formatTerm(p1, state) + ")"
+      case PermPlus(p0, p1) => "(" + formatTerm(p0, state) + "+" + formatTerm(p1, state) + ")"
+      case PermMinus(p0, p1) => "(" + formatTerm(p0, state) + "-" + formatTerm(p1, state) + ")"
+      case PermLess(p0, p1) => "(" + formatTerm(p0, state) + "<" + formatTerm(p1, state) + ")"
+      case PermAtMost(p0, p1) => "(" + formatTerm(p0, state) + "<=" + formatTerm(p1, state) + ")"
       case SeqRanged(p0, p1) => "[" + formatTerm(p0, state) + ".." + formatTerm(p1, state) + "]"
       case SeqNil(elementsSort) => "nil"
       case SeqSingleton(p) => "[" + formatTerm(p, state) + "]"
@@ -637,8 +639,8 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case True => " == true"
       case False => " == false"
       case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name == "$t" => ""
-      case Var(SuffixedIdentifier(prefix, _, _), _, _) if !prefix.name.contains("$result") && prefix.name.contains("$") => ""
-      case Var(SuffixedIdentifier(prefix, _, _), _, _) => "\u8B8A\u6578" + prefix
+      case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name.contains("$") => ""
+      case Var(SuffixedIdentifier(prefix, separator, suffix), _, _) => "\u8B8A\u6578" + prefix.name + separator + suffix
       case _ => ""
     }
     basicChunk.resourceID match {
@@ -666,7 +668,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
               if (!subMap.contains(basicChunk.snap)) {
                 subMap += basicChunk.snap -> (basicChunk, node)
               }
-            case Var(SuffixedIdentifier(prefix, _, _), _, _) if !prefix.name.contains("$result") && prefix.name.contains("$")  =>
+            case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name.contains("$")  =>
               val subMap = snapsFor(state)
               if (!subMap.contains(basicChunk.snap)) {
                 subMap += basicChunk.snap -> (basicChunk, node)
@@ -724,7 +726,10 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
         case Div(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case Mod(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case Ite(p0, p1, p2) => isPCVisible(p0, state) && isPCVisible(p1, state) && isPCVisible(p2, state)
-        case BuiltinEquals(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+        case BuiltinEquals(p0, p1) =>
+          // if latest version of variable or field access does not appear in PC, do not display it
+          (state.g.termExists(p0) || state.h.chunkWithSnapExists(p0)) && isPCVisible(p1, state) ||
+            isPCVisible(p0, state) && (state.g.termExists(p1) || state.h.chunkWithSnapExists(p1))
         case CustomEquals(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case Less(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
         case AtMost(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
@@ -764,7 +769,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
           populateWhileLoops(thn.ss)
           populateWhileLoops(els.ss)
         case ast.While(cond, invs, body) =>
-          assert(invs.length == 1)
+          assert(invs.nonEmpty)
           whileLoops += invs.head -> stmt
         case ast.Label(name, invs) =>
         case ast.Goto(target) =>
