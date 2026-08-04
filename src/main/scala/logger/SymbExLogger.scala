@@ -506,7 +506,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
   val snaps: mutable.Map[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]] =
     TrieMap[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]]()
   val freshTerms: mutable.Map[Term, Term] = TrieMap[Term, Term]()
-  val ignoreSet: mutable.Map[Term, Boolean] = TrieMap[Term, Boolean]()
+  val functionApps: mutable.Map[Term, ast.Node] = TrieMap[Term, ast.Node]()
   // while loops are uniquely identified by their invariants, this is needed
   // to find the position of the while loops for displaying the state when
   // entering and leaving the loop.
@@ -519,7 +519,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     val pos = node.asInstanceOf[ast.Positioned].pos
     pos match {
       case translatedPos: TranslatedPosition =>
-        " line " + translatedPos.line.toString
+        " at " + translatedPos.line.toString + "." + translatedPos.column.toString
       case _ =>
         ""
     }
@@ -592,7 +592,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case True => "true"
       case False => "false"
       case IntLiteral(n) => n.toString
-      case App(HeapDepFun(id, argSorts, resultSort), args) => id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")"
+      case App(HeapDepFun(id, argSorts, resultSort), args) => id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")" + formatPosition(functionApps(args.head))
       case App(DomainFun(id, argSorts, resultSort), args) => id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
       case Quantification(Forall, vars, body, trigger, name, isGlobal, weight) =>
         "forall " + vars.map(formatQVar).mkString(", ") + " :: (" + formatTerm(body, state) + ")"
@@ -704,45 +704,40 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     }
   }
 
-  def isPCVisible(term: Term, state: State): Boolean = {
-    if (ignoreSet.contains(term)) {
-      false
-    } else {
-      term match {
-        case App(app, _) => !app.id.name.endsWith("%trigger")
-        case Combine(_, _) => false
-        case First(_) => false
-        case Second(_) => false
-        case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name == "$t" => snapsFor(state).contains(term)
-        case Var(SuffixedIdentifier(prefix, _, _), _, _) => true
-        case SortWrapper(_, _) => snapsFor(state).contains(term)
-        case Null => true
-        case True => true
-        case False => true
-        case IntLiteral(_) => true
-        case Plus(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Minus(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Times(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Div(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Mod(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Ite(p0, p1, p2) => isPCVisible(p0, state) && isPCVisible(p1, state) && isPCVisible(p2, state)
-        case BuiltinEquals(p0, p1) =>
-          // if latest version of variable or field access does not appear in PC, do not display it
-          (state.g.termExists(p0) || state.h.chunkWithSnapExists(p0)) && isPCVisible(p1, state) ||
-            isPCVisible(p0, state) && (state.g.termExists(p1) || state.h.chunkWithSnapExists(p1))
-        case CustomEquals(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Less(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case AtMost(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Greater(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case AtLeast(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case Not(p) => isPCVisible(p, state)
-        case Or(ts) => ts.map(isPCVisible(_, state)).reduce((x, y) => x && y)
-        case And(ts) => ts.map(isPCVisible(_, state)).reduce((x, y) => x && y)
-        case Implies(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
-        case _ => true
-      }
+  def isPCVisible(term: Term, state: State): Boolean =
+    term match {
+      case App(app, _) => !app.id.name.endsWith("%trigger")
+      case Combine(_, _) => false
+      case First(_) => false
+      case Second(_) => false
+      case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name == "$t" => snapsFor(state).contains(term)
+      case Var(SuffixedIdentifier(prefix, _, _), _, _) => true
+      case SortWrapper(_, _) => snapsFor(state).contains(term)
+      case Null => true
+      case True => true
+      case False => true
+      case IntLiteral(_) => true
+      case Plus(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Minus(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Times(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Div(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Mod(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Ite(p0, p1, p2) => isPCVisible(p0, state) && isPCVisible(p1, state) && isPCVisible(p2, state)
+      case BuiltinEquals(p0, p1) =>
+        // if latest version of variable or field access does not appear in PC, do not display it
+        (state.g.termExists(p0) || state.h.chunkWithSnapExists(p0)) && isPCVisible(p1, state) ||
+          isPCVisible(p0, state) && (state.g.termExists(p1) || state.h.chunkWithSnapExists(p1))
+      case CustomEquals(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Less(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case AtMost(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Greater(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case AtLeast(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case Not(p) => isPCVisible(p, state)
+      case Or(ts) => ts.map(isPCVisible(_, state)).reduce((x, y) => x && y)
+      case And(ts) => ts.map(isPCVisible(_, state)).reduce((x, y) => x && y)
+      case Implies(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
+      case _ => true
     }
-  }
 
   def formatPCs(previousPCs: InsertionOrderedSet[Term], currentPCs: InsertionOrderedSet[Term], state: State): Seq[String] = {
     val addedPCs = for (aPC <- currentPCs if !previousPCs.contains(aPC)) yield aPC
@@ -782,7 +777,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
   def resetMaps(): Unit = {
     snaps.clear()
     freshTerms.clear()
-    ignoreSet.clear()
+    functionApps.clear()
     whileLoops.clear()
   }
 
