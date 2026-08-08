@@ -45,6 +45,9 @@ trait SymbolicExecutionRules {
   }
 
   protected def createFailure(ve: VerificationError, v: Verifier, s: State, failedAssert: Term, failedAssertExp: Option[DebugExp], generateNewModel: Boolean): Failure = {
+    // Errors can be either real or caused by unconsolidated heap
+    // incompleteness, every error encountered MUST be checked against
+    // VerificationError list returned by verifier!
     val sepIdentifier = v.symbExLog.openScope(new ErrorRecord(ve, s, v.decider.pcs))
     v.symbExLog.populateSnaps(s.h.values.toSeq, s, ve.offendingNode)
     v.symbExLog.closeScope(sepIdentifier)

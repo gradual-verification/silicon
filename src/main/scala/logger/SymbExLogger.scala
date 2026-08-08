@@ -506,6 +506,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
   val snaps: mutable.Map[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]] =
     TrieMap[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]]()
   val freshTerms: mutable.Map[Term, Term] = TrieMap[Term, Term]()
+  // maps entire function App(...) term to the node where it originated from
   val functionApps: mutable.Map[Term, ast.Node] = TrieMap[Term, ast.Node]()
   // while loops are uniquely identified by their invariants, this is needed
   // to find the position of the while loops for displaying the state when
@@ -539,7 +540,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
         formatBasicChunk(chunk, state) + formatPosition(node)
       case Var(SuffixedIdentifier(prefix, _, _), _, _) if !prefix.name.contains("$result") && !prefix.name.contains("_result$") && prefix.name.contains("$") =>
         // field of a struct if it has been re-assigned
-        if (freshTerms.contains(term)) {
+        if (freshTerms.contains(term) && snapsFor(state).contains(term)) {
           val (chunk, node) = snapsFor(state)(term)
           if (state.h.chunkWithSnapExists(term)) {
             // permission for said field of struct exists in heap,
@@ -592,7 +593,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case True => "true"
       case False => "false"
       case IntLiteral(n) => n.toString
-      case App(HeapDepFun(id, argSorts, resultSort), args) => id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")" + formatPosition(functionApps(args.head))
+      case App(HeapDepFun(id, argSorts, resultSort), args) => id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")" + formatPosition(functionApps(term))
       case App(DomainFun(id, argSorts, resultSort), args) => id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
       case Quantification(Forall, vars, body, trigger, name, isGlobal, weight) =>
         "forall " + vars.map(formatQVar).mkString(", ") + " :: (" + formatTerm(body, state) + ")"
@@ -625,6 +626,8 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case SeqNil(elementsSort) => "nil"
       case SeqSingleton(p) => "[" + formatTerm(p, state) + "]"
       case SeqAppend(p0, p1) => "(" + formatTerm(p0, state) + " ++ " + formatTerm(p1, state) + ")"
+      case SeqDrop(p0, p1) => "(" + formatTerm(p0, state) + ")[" + formatTerm(p1, state) + ":]"
+      case SeqTake(p0, p1) => "(" + formatTerm(p0, state) + ")[:" + formatTerm(p1, state) + "]"
       case SeqLength(p) => "|" + formatTerm(p, state) + "|"
       case SeqAt(p0, p1) => "(" + formatTerm(p0, state) + ")[" + formatTerm(p1, state) + "]"
       case SeqIn(p0, p1) => "(" + formatTerm(p0, state) + " elem " + formatTerm(p1, state) + ")"
@@ -706,7 +709,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
 
   def isPCVisible(term: Term, state: State): Boolean =
     term match {
-      case App(app, _) => !app.id.name.endsWith("%trigger")
+      case App(app, _) => !app.id.name.endsWith("%trigger") && !app.id.name.endsWith("%precondition")
       case Combine(_, _) => false
       case First(_) => false
       case Second(_) => false
@@ -724,9 +727,8 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case Mod(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
       case Ite(p0, p1, p2) => isPCVisible(p0, state) && isPCVisible(p1, state) && isPCVisible(p2, state)
       case BuiltinEquals(p0, p1) =>
-        // if latest version of variable or field access does not appear in PC, do not display it
-        (state.g.termExists(p0) || state.h.chunkWithSnapExists(p0)) && isPCVisible(p1, state) ||
-          isPCVisible(p0, state) && (state.g.termExists(p1) || state.h.chunkWithSnapExists(p1))
+        // do not display "trivial" equivalences where a term is compared against itself
+        p0 != p1 && isPCVisible(p0, state) && isPCVisible(p1, state)
       case CustomEquals(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
       case Less(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
       case AtMost(p0, p1) => isPCVisible(p0, state) && isPCVisible(p1, state)
