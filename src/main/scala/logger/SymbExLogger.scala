@@ -20,6 +20,7 @@ import viper.silicon.logger.renderer.SimpleTreeRenderer
 import viper.silicon.resources.{FieldID, PredicateID}
 import viper.silicon.state.BasicChunk
 import viper.silicon.state.Heap
+import viper.silicon.state.Identifier
 import viper.silicon.state.State
 import viper.silicon.state.SuffixedIdentifier
 import viper.silicon.state.terms._
@@ -538,7 +539,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
         // field of a struct, opaque snappy that came from the precondition
         val (chunk, node) = snapsFor(state)(term)
         formatBasicChunk(chunk, state) + formatPosition(node)
-      case Var(SuffixedIdentifier(prefix, _, _), _, _) if !prefix.name.contains("$result") && !prefix.name.contains("_result$") && prefix.name.contains("$") =>
+      case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name.contains("$") && !prefix.name.startsWith("fn$$") =>
         // field of a struct if it has been re-assigned
         if (freshTerms.contains(term) && snapsFor(state).contains(term)) {
           val (chunk, node) = snapsFor(state)(term)
@@ -593,8 +594,10 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case True => "true"
       case False => "false"
       case IntLiteral(n) => n.toString
-      case App(HeapDepFun(id, argSorts, resultSort), args) => id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")" + formatPosition(functionApps(term))
-      case App(DomainFun(id, argSorts, resultSort), args) => id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
+      case App(HeapDepFun(id, argSorts, resultSort), args) =>
+        id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")" + formatPosition(functionApps(term))
+      case App(DomainFun(id, argSorts, resultSort), args) =>
+        id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
       case Quantification(Forall, vars, body, trigger, name, isGlobal, weight) =>
         "forall " + vars.map(formatQVar).mkString(", ") + " :: (" + formatTerm(body, state) + ")"
       case Plus(p0, p1) => "(" + formatTerm(p0, state) + " + " + formatTerm(p1, state) + ")"
@@ -602,14 +605,16 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case Times(p0, p1) => "(" + formatTerm(p0, state) + " * " + formatTerm(p1, state) + ")"
       case Div(p0, p1) => "(" + formatTerm(p0, state) + " / " + formatTerm(p1, state) + ")"
       case Mod(p0, p1) => "(" + formatTerm(p0, state) + " % " + formatTerm(p1, state) + ")"
-      case Ite(p0, p1, p2) => "(" + formatTerm(p0, state) + " ? " + formatTerm(p1, state) + " : " + formatTerm(p2, state) + ")"
+      case Ite(p0, p1, p2) =>
+        "(" + formatTerm(p0, state) + " ? " + formatTerm(p1, state) + " : " + formatTerm(p2, state) + ")"
       case BuiltinEquals(p0, p1) => "(" + formatTerm(p0, state) + " == " + formatTerm(p1, state) + ")"
       case CustomEquals(p0, p1) => "(" + formatTerm(p0, state) + " === " + formatTerm(p1, state) + ")"
       case Less(p0, p1) => "(" + formatTerm(p0, state) + " < " + formatTerm(p1, state) + ")"
       case AtMost(p0, p1) => "(" + formatTerm(p0, state) + " <= " + formatTerm(p1, state) + ")"
       case Greater(p0, p1) => "(" + formatTerm(p0, state) + " > " + formatTerm(p1, state) + ")"
       case AtLeast(p0, p1) => "(" + formatTerm(p0, state) + " >= " + formatTerm(p1, state) + ")"
-      case Not(BuiltinEquals(p0, p1)) => "(" + formatTerm(p0, state) + " != " + formatTerm(p1, state) + ")" // syntactic sugar for !=
+      case Not(BuiltinEquals(p0, p1)) =>
+        "(" + formatTerm(p0, state) + " != " + formatTerm(p1, state) + ")" // syntactic sugar for !=
       case Not(p) => "(" + "!" + formatTerm(p, state) + ")"
       case Or(ts) => "(" + ts.map(formatTerm(_, state)).mkString(" || ") + ")"
       case And(ts) => "(" + ts.map(formatTerm(_, state)).mkString(" && ") + ")"
@@ -707,9 +712,17 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     }
   }
 
+  // special identifier created by Silicon when evaluating let expressions
+  def isLetvar(id: Identifier): Boolean =
+    id match {
+      case SuffixedIdentifier(prefix, _, _) if prefix.name == "letvar" => true
+      case _ => false
+    }
+
   def isPCVisible(term: Term, state: State): Boolean =
     term match {
-      case App(app, _) => !app.id.name.endsWith("%trigger") && !app.id.name.endsWith("%precondition")
+      case App(app, _) =>
+        !app.id.name.endsWith("%trigger") && !app.id.name.endsWith("%precondition") && !isLetvar(app.id)
       case Combine(_, _) => false
       case First(_) => false
       case Second(_) => false
