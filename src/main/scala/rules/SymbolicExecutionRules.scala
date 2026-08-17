@@ -9,13 +9,15 @@ package viper.silicon.rules
 import viper.silicon.debugger.DebugExp
 import viper.silicon.interfaces.{Failure, SiliconDebuggingFailureContext, SiliconFailureContext, SiliconMappedCounterexample, SiliconNativeCounterexample, SiliconVariableCounterexample}
 import viper.silicon.logger.records.data.ErrorRecord
+import viper.silicon.reporting.{SiliconRawCounterexample, SiliconResolvedCounterexample}
 import viper.silicon.state.State
 import viper.silicon.state.terms.{False, Term}
 import viper.silicon.verifier.Verifier
+import viper.silver.frontend.{ResolvedModel, RawModel, MappedModel, NativeModel, VariablesModel}
 import viper.silver.ast
-import viper.silver.frontend.{MappedModel, NativeModel, VariablesModel}
 import viper.silver.verifier.errors.ErrorWrapperWithExampleTransformer
 import viper.silver.verifier.{Counterexample, CounterexampleTransformer, VerificationError}
+import viper.silver.reporter.BlockFailureMessage
 
 trait SymbolicExecutionRules {
   lazy val withExp = Verifier.config.enableDebugging()
@@ -51,7 +53,19 @@ trait SymbolicExecutionRules {
     val sepIdentifier = v.symbExLog.openScope(new ErrorRecord(ve, s, v.decider.pcs))
     v.symbExLog.populateSnaps(s.h.values.toSeq, s, ve.offendingNode)
     v.symbExLog.closeScope(sepIdentifier)
-    if (s.retryLevel == 0 && !ve.isExpected) v.errorsReportedSoFar.incrementAndGet()
+    if (s.retryLevel == 0 && !ve.isExpected) {
+      if (Verifier.config.generateBlockMessages()) {
+        s.currentMember.foreach((member) => {
+          val memberName = member.name
+          s.currentBlock.foreach((block) => 
+            v.reporter.report(BlockFailureMessage(memberName, block._1, block._2))
+          )
+        })
+      }
+
+      v.errorsReportedSoFar.incrementAndGet()
+    }
+
     var ceTrafo: Option[CounterexampleTransformer] = None
     val res = ve match {
       case ErrorWrapperWithExampleTransformer(wrapped, trafo) =>
@@ -76,6 +90,8 @@ trait SymbolicExecutionRules {
             SiliconVariableCounterexample(s.g, nativeModel)
           case MappedModel =>
             SiliconMappedCounterexample(s.g, s.h.values, s.oldHeaps, nativeModel, s.program)
+          case RawModel => SiliconRawCounterexample(nativeModel, s.g, s.h.values, s.oldHeaps, s.program)
+          case ResolvedModel => SiliconResolvedCounterexample(nativeModel, s.g, s.h.values, s.oldHeaps, s.program)
         }
         val finalCE = ceTrafo match {
           case Some(trafo) => trafo.f(ce)
