@@ -8,6 +8,7 @@ package viper.silicon.logger.records.data
 
 import viper.silicon.common.collections.immutable.InsertionOrderedSet
 import viper.silicon.decider.PathConditionStack
+import viper.silicon.logger.SymbExLogger
 import viper.silicon.state.State
 import viper.silicon.state.terms.Term
 import viper.silver.ast
@@ -18,4 +19,11 @@ class MethodCallRecord(v: ast.MethodCall, s: State, p: PathConditionStack) exten
   val pcs: InsertionOrderedSet[Term] = if (p != null) p.assumptions else null
 
   override val toTypeString: String = "method call"
+
+  override lazy val toSimpleString: String = {
+    if (value != null) {
+      val name = SymbExLogger.displayName(value, value.methodName)
+      value.copy(methodName = name)(value.pos, value.info, value.errT).toString()
+    } else "null"
+  }
 }

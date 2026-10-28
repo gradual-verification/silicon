@@ -8,6 +8,7 @@ package viper.silicon.logger.records.data
 
 import viper.silicon.common.collections.immutable.InsertionOrderedSet
 import viper.silicon.decider.PathConditionStack
+import viper.silicon.logger.SymbExLogger
 import viper.silicon.state.terms.Term
 import viper.silver.ast
 
@@ -18,7 +19,7 @@ class MethodRecord(v: ast.Method, p: PathConditionStack) extends MemberRecord {
   override val toTypeString: String = "method"
 
   override lazy val toSimpleString: String = {
-    if (value != null) value.name
+    if (value != null) SymbExLogger.displayName(value, value.name)
     else "null"
   }
 }

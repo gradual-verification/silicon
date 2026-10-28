@@ -159,11 +159,15 @@ object evaluator extends EvaluationRules {
         Q(s1, t, Option.when(withExp)(ast.NeCmp(e0New.get, e1New.get)(e.pos, e.info, e.errT)), v1))
 
       case x: ast.LocalVarWithVersion =>
+        v.symbExLog.registerVariable(x)
         val sort = v.symbolConverter.toSort(x.typ)
         val term = Var(Identifier.apply(x.name + "@" + v.uniqueId), sort, false)
+        v.symbExLog.registerVariable(x, term.id.name)
         Q(s, term, eOpt, v)
 
-      case x: ast.AbstractLocalVar => Q(s, s.g(x), s.g.getExp(x), v)
+      case x: ast.AbstractLocalVar =>
+        v.symbExLog.registerVariable(x)
+        Q(s, s.g(x), s.g.getExp(x), v)
 
       case _: ast.FullPerm => Q(s, FullPerm, eOpt, v)
       case _: ast.NoPerm => Q(s, NoPerm, eOpt, v)
@@ -415,7 +419,11 @@ object evaluator extends EvaluationRules {
           val outSort = v1.symbolConverter.toSort(dfa.typ)
           val fi = v1.symbolConverter.toFunction(s.program.findDomainFunction(funcName), inSorts :+ outSort, s.program)
           val dfaP = Option.when(withExp)(ast.DomainFuncApp(funcName, eArgsNew.get, m)(dfa.pos, dfa.info, dfa.typ, dfa.domainName, dfa.errT))
-          Q(s1, App(fi, tArgs), dfaP, v1)})
+          val term = App(fi, tArgs)
+          v1.symbExLog.whenEnabled {
+            v1.symbExLog.functionApps.update(term, dfa)
+          }
+          Q(s1, term, dfaP, v1)})
 
       case bf @ ast.BackendFuncApp(funcName, eArgs) =>
         evals(s, eArgs, _ => pve, v)((s1, tArgs, eArgsNew, v1) => {

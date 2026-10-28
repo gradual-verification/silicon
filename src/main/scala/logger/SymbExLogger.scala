@@ -232,6 +232,27 @@ case object SymbExLogger {
   def m(memberSymbExLogger: MemberSymbExLogger): MemberRecord = memberSymbExLogger.main
 
   val loggers: mutable.Map[MemberSymbExLogger, Unit] = TrieMap[MemberSymbExLogger, Unit]()
+
+  var sourceNameFinder: Option[ast.Node => Option[String]] = None
+
+  def sourceName(node: ast.Node): Option[String] = sourceNameFinder.flatMap(_(node))
+
+  def displayName(node: ast.Node, encodedName: String): String =
+    sourceName(node).getOrElse(encodedName)
+
+  def isFreshNameVar(t: Term): Boolean = {
+    t match {
+      case Var(SuffixedIdentifier(prefix, separator, suffix), _, _) => prefix.name.matches("""fn\$\$\d+""")
+      case _ => false
+    }
+  }
+
+  def isBigNVar(t: Term): Boolean = {
+    t match {
+      case Var(SuffixedIdentifier(prefix, separator, suffix), _, _) => prefix.name.matches("""N\d+""")
+      case _ => false
+    }
+  }
 }
 
 abstract class SymbExLogger[Log <: MemberSymbExLogger]() {
@@ -304,6 +325,7 @@ case class SymbExLog(logConfig: LogConfig) extends SymbExLogger[MemberSymbExLog]
 abstract class MemberSymbExLogger(log: SymbExLogger[_],
                                   val member: ast.Member,
                                   val pcs: PathConditionStack) {
+  protected def logRecords: Seq[SymbolicRecord]
   protected def appendDataRecord(r: DataRecord): Unit
   protected def appendScopingRecord(r: ScopingRecord, ignoreBranchingStack: Boolean = false): Unit
   protected def appendBranchingRecord(r: BranchingRecord): Unit
@@ -341,6 +363,7 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
   var main: MemberRecord = _
 
   def openMemberScope(): Unit = {
+    registerVariables(member)
     main = member match {
       case m: ast.Method => new MethodRecord(m, pcs)
       case p: ast.Predicate => new PredicateRecord(p, pcs)
@@ -507,12 +530,59 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
   val snaps: mutable.Map[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]] =
     TrieMap[Stack[Heap], mutable.Map[Term, (BasicChunk, ast.Node)]]()
   val freshTerms: mutable.Map[Term, Term] = TrieMap[Term, Term]()
-  // maps entire function App(...) term to the node where it originated from
+  // Maps function and domain-function App(...) terms to their source nodes.
   val functionApps: mutable.Map[Term, ast.Node] = TrieMap[Term, ast.Node]()
+  // Names belong to bindings: several variables may denote the same symbolic term.
+  val variableNames: mutable.Map[String, String] = TrieMap[String, String]()
+  // A dynamic predicate may represent several source predicates. Keep all observed
+  // names for an instance so that formatting never picks an arbitrary alias.
+  private val predicateNames = TrieMap[(String, Seq[Term]), TrieMap[String, Unit]]()
   // while loops are uniquely identified by their invariants, this is needed
   // to find the position of the while loops for displaying the state when
   // entering and leaving the loop.
   val whileLoops: mutable.Map[ast.Exp, ast.Stmt] = TrieMap[ast.Exp, ast.Stmt]()
+
+  def registerVariable(node: ast.Node): Unit = whenEnabled {
+    val encodedName = node match {
+      case decl: ast.LocalVarDecl => Some(decl.name)
+      case local: ast.AbstractLocalVar => Some(local.name)
+      case _ => None
+    }
+    encodedName.foreach(encoded => registerVariable(node, encoded))
+  }
+
+  def registerVariable(node: ast.Node, encodedName: String): Unit = whenEnabled {
+    for {
+      finder <- SymbExLogger.sourceNameFinder
+      sourceName <- finder(node)
+    } variableNames.update(encodedName, sourceName)
+  }
+
+  def registerVariables(node: ast.Node): Unit = whenEnabled {
+    if (SymbExLogger.sourceNameFinder.nonEmpty) {
+      node.visit {
+        case decl: ast.LocalVarDecl => registerVariable(decl)
+        case local: ast.AbstractLocalVar => registerVariable(local)
+      }
+    }
+  }
+
+  def variableName(encodedName: String): String =
+    variableNames.getOrElse(encodedName, encodedName)
+
+  def registerPredicateAccess(access: ast.PredicateAccess, args: Seq[Term]): Unit = whenEnabled {
+    SymbExLogger.sourceName(access).foreach { name =>
+      predicateNames.getOrElseUpdate((access.predicateName, args), TrieMap.empty[String, Unit])
+        .update(name, ())
+    }
+  }
+
+  private def predicateName(chunk: BasicChunk, state: State): String = {
+    val names = predicateNames.get((chunk.id.name, chunk.args)).map(_.keySet.toSet)
+    names.filter(_.size == 1).map(_.head)
+      .orElse(state.program.findPredicateOptionally(chunk.id.name).flatMap(SymbExLogger.sourceName))
+      .getOrElse(chunk.id.name)
+  }
 
   def snapsFor(state: State): mutable.Map[Term, (BasicChunk, ast.Node)] =
     snaps(state.invariantContexts)
@@ -529,8 +599,8 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
 
   def formatQVar(v: Var): String =
     v match {
-      case Var(SuffixedIdentifier(prefix, _, _), sort, _) => prefix.name + " " + sort.toString
-      case _ => v.id.name + " " + v.sort.toString
+      case Var(SuffixedIdentifier(prefix, _, _), sort, _) => variableName(prefix.name) + " " + sort.toString
+      case _ => variableName(v.id.name) + " " + v.sort.toString
     }
 
   def formatTerm(term: Term, state: State): String =
@@ -560,10 +630,10 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
         // variable access
         if (freshTerms.contains(term)) {
           // variable has been assigned to
-          if (state.g.termExists(term)) {
+          if (!SymbExLogger.isBigNVar(term) && !SymbExLogger.isFreshNameVar(term) && state.g.termExists(term)) {
             // the variable referred to is the latest version in the store,
             // refer to it by name
-            prefix.name
+            variableName(prefix.name)
           } else {
             // the variable referred to is not the latest version, retrieve
             // its definition
@@ -574,17 +644,18 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
           if (state.g.termExists(term)) {
             // the variable referred to is the latest version in the store,
             // refer to it by name
-            prefix.name
+            variableName(prefix.name)
           } else {
             // the variable referred to is not the latest version, retrieve
             // its definition
             if (state.invariantContexts.nonEmpty) { // in a loop, value before entering loop
-              "in(" + prefix + ")"
+              "in(" + variableName(prefix.name) + ")"
             } else { // outside of loop
-              "old(" + prefix + ")"
+              "old(" + variableName(prefix.name) + ")"
             }
           }
         }
+      case v: Var => variableName(v.id.name)
       case SortWrapper(_, _) =>
         // field of a struct, SortWrapper wraps First and Second snapshots
         val (chunk, node) = snapsFor(state)(term)
@@ -595,9 +666,18 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case False => "false"
       case IntLiteral(n) => n.toString
       case App(HeapDepFun(id, argSorts, resultSort), args) =>
-        id.name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")" + formatPosition(functionApps(term))
+        val source = functionApps.get(term)
+        // Opaque calls may use a limited backend symbol. The recorded application
+        // still identifies the original declaration without parsing that symbol.
+        val declarationName = source.collect { case call: ast.FuncApp => call.funcname }.getOrElse(id.name)
+        val name = source.flatMap(SymbExLogger.sourceName)
+          .orElse(state.program.findFunctionOptionally(declarationName).flatMap(SymbExLogger.sourceName))
+          .getOrElse(id.name)
+        name + "(" + args.drop(1).map(formatTerm(_, state)).mkString(", ") + ")" + source.map(formatPosition).getOrElse("")
       case App(DomainFun(id, argSorts, resultSort), args) =>
-        id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
+        formatStructField(term, state).getOrElse {
+          id.name + "(" + args.map(formatTerm(_, state)).mkString(", ") + ")"
+        }
       case Quantification(Forall, vars, body, trigger, name, isGlobal, weight) =>
         "forall " + vars.map(formatQVar).mkString(", ") + " :: (" + formatTerm(body, state) + ")"
       case Plus(p0, p1) => "(" + formatTerm(p0, state) + " + " + formatTerm(p1, state) + ")"
@@ -639,6 +719,23 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case _ => "\uD83E\uDD81" + term.toString + "\uD83E\uDD81" // HIC SUNT LEONES
     }
 
+  private val ShStructPattern = """ShStructget(\d+)of(\d+)(.*)""".r
+
+  private def formatStructField(term: Term, state: State): Option[String] = term match {
+    case App(DomainFun(id, _, _), Seq(base)) =>
+      id.name match {
+        case ShStructPattern(index, _, _) =>
+          val fieldName = for {
+            node <- functionApps.get(term)
+            finder <- SymbExLogger.sourceNameFinder
+            name <- finder(node)
+          } yield name
+          Some(formatTerm(base, state) + "." + fieldName.getOrElse("#" + index))
+        case _ => None
+      }
+    case _ => None
+  }
+
   def formatBasicChunk(basicChunk: BasicChunk, state: State): String = {
     val s = basicChunk.snap match {
       case Unit => " == UNIT"
@@ -648,16 +745,19 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
       case False => " == false"
       case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name == "$t" => ""
       case Var(SuffixedIdentifier(prefix, _, _), _, _) if prefix.name.contains("$") => ""
-      case Var(SuffixedIdentifier(prefix, separator, suffix), _, _) => "\u8B8A\u6578" + prefix.name + separator + suffix
+      case Var(SuffixedIdentifier(prefix, separator, suffix), _, _) => "\u8B8A\u6578" + variableName(prefix.name) + separator + suffix
       case _ => ""
     }
     basicChunk.resourceID match {
       case FieldID =>
-        val fieldAcc = formatTerm(basicChunk.args.head, state) + "." + basicChunk.id.name
-        fieldAcc + s
+        "acc(" + formatStructField(basicChunk.args.head, state).getOrElse {
+          "{" + basicChunk.args.head.toString + "}#" + basicChunk.id.name
+        } + ")"
+        //val fieldAcc = formatTerm(basicChunk.args.head, state) + "." + " "// basicChunk.id.name
+        //fieldAcc + s
       case PredicateID =>
         val argsAsString = basicChunk.args.map(formatTerm(_, state)).mkString(", ")
-        basicChunk.id.name + "(" + argsAsString + ")" + s
+        predicateName(basicChunk, state) + "(" + argsAsString + ")" + s
       case _ => ""
     }
   }
@@ -710,6 +810,46 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
         formatBasicChunk(basicChunk, state) + "; "
       case _ => "\u22A5; "
     }
+  }
+
+  /** Exports recorded statements and loop invariants with a translated position and their recorded heap,
+    * as well as end and error records.
+    * Records in nested branches are visited in log order, without merging repeated positions.
+    * Each object has `line`, `column`, and `heap` (formatted chunk strings).
+    * End and error records have null positions and a `kind`; error records also have an `error` message.
+    */
+  def logToJson: JsArray = {
+    def terminalEntry(kind: String, state: State): JsObject = JsObject(
+      "line" -> JsNull,
+      "column" -> JsNull,
+      "heap" -> JsArray(formatChunks(state.h.values.toSeq, state).map(JsString(_)).toVector),
+      "kind" -> JsString(kind))
+
+    def entry(position: ast.Position, state: State): Iterator[JsObject] =
+      position match {
+        case pos: ast.TranslatedPosition =>
+          val heap = formatChunks(state.h.values.toSeq, state)
+          Iterator.single(JsObject(
+            "line" -> JsNumber(pos.line),
+            "column" -> JsNumber(pos.column),
+            "heap" -> JsArray(heap.map(JsString(_)).toVector)))
+        case _ => Iterator.empty
+      }
+
+    def collect(records: Seq[SymbolicRecord]): Iterator[JsObject] = records.iterator.flatMap {
+      case record: ExecuteRecord => entry(record.value.pos, record.state)
+      case record: LoopInRecord => entry(record.value.pos, record.state)
+      case record: LoopOutRecord => entry(record.value.pos, record.state)
+      case record: EndRecord => Iterator.single(terminalEntry(record.toTypeString, record.state))
+      case record: ErrorRecord =>
+        Iterator.single(JsObject(terminalEntry(record.toTypeString, record.state).fields +
+          ("error" -> JsString(record.error.readableMessage))))
+      case branching: BranchingRecord =>
+        branching.getBranches.iterator.flatMap(collect)
+      case _ => Iterator.empty
+    }
+
+    JsArray(collect(logRecords).toVector)
   }
 
   // special identifier created by Silicon when evaluating let expressions
@@ -793,13 +933,17 @@ abstract class MemberSymbExLogger(log: SymbExLogger[_],
     snaps.clear()
     freshTerms.clear()
     functionApps.clear()
+    variableNames.clear()
+    predicateNames.clear()
     whileLoops.clear()
+    registerVariables(member)
   }
 
   SymbExLogger.loggers += this -> ()
 }
 
 case object NoopMemberSymbExLog extends MemberSymbExLogger(null, null, null) {
+  override protected def logRecords: Seq[SymbolicRecord] = Vector.empty
   override def appendDataRecord(r: DataRecord): Unit = {}
   override def appendScopingRecord(r: ScopingRecord, ignoreBranchingStack: Boolean): Unit = {}
   override def appendBranchingRecord(r: BranchingRecord): Unit = {}
@@ -826,6 +970,8 @@ class MemberSymbExLog(rootLog: SymbExLogger[MemberSymbExLog],
   /** top level log entries for this member; these log entries were recorded consecutively without branching;
     * in case branching occured, one of these records is a BranchingRecord with all branches as field attached to it */
   var log: Vector[SymbolicRecord] = Vector[SymbolicRecord]()
+
+  override protected def logRecords: Seq[SymbolicRecord] = log
 
   /** this stack keeps track of BranchingRecords while adding records to the log; as soon as all branches of a
     * BranchingRecord are done, logging has to switch back to the previous BranchingRecord */

@@ -10,6 +10,7 @@ import viper.silver.ast
 import viper.silicon.{Map, toMap}
 import viper.silicon.state.terms.Term
 import viper.silver.ast.AbstractLocalVar
+import viper.silver.ast.LocalVar
 
 trait Store {
   def values: Map[ast.AbstractLocalVar, (Term, Option[ast.Exp])]
@@ -21,6 +22,7 @@ trait Store {
   def +(kv: (ast.AbstractLocalVar, (Term, Option[ast.Exp]))): Store
   def +(other: Store): Store
   def termExists(term: Term): Boolean
+  def getByName(name: String): ast.AbstractLocalVar
 }
 
 trait StoreFactory[ST <: Store] {
@@ -53,4 +55,9 @@ final class MapBackedStore private[state] (map: Map[ast.AbstractLocalVar, (Term,
   def +(entry: (ast.AbstractLocalVar, (Term, Option[ast.Exp]))) = new MapBackedStore(map + entry)
   def +(other: Store) = new MapBackedStore(map ++ other.values)
   def termExists(term: Term): Boolean = values.exists { case (_, (termValue, _)) => term == termValue }
+
+  override def getByName(name: String): AbstractLocalVar = {
+    val entry = values.find { case (LocalVar(varName, typ), _) => varName == name }
+    entry.get._1
+  }
 }

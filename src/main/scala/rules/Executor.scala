@@ -15,11 +15,12 @@ import viper.silver.cfg.silver.SilverCfg
 import viper.silver.cfg.silver.SilverCfg.{SilverBlock, SilverEdge}
 import viper.silver.verifier.{CounterexampleTransformer, NullPartialVerificationError, PartialVerificationError}
 import viper.silver.verifier.errors._
-import viper.silver.reporter.{PathProcessedMessage, BlockReachedMessage}
+import viper.silver.reporter.{BlockReachedMessage, PathProcessedMessage}
 import viper.silver.verifier.reasons._
 import viper.silver.{ast, cfg}
 import viper.silicon.decider.RecordedPathConditions
 import viper.silicon.interfaces._
+import viper.silicon.logger.SymbExLogger
 import viper.silicon.logger.records.data.EndRecord
 import viper.silicon.logger.records.data.LoopInRecord
 import viper.silicon.logger.records.data.LoopOutRecord
@@ -29,7 +30,9 @@ import viper.silicon.state.terms._
 import viper.silicon.utils.ast.{BigAnd, extractPTypeFromExp, simplifyVariableName}
 import viper.silicon.utils.freshSnap
 import viper.silicon.verifier.Verifier
+import viper.silver.ast.{Exp, TrueLit}
 import viper.silver.cfg.{ConditionalEdge, StatementBlock}
+
 import java.util.concurrent.atomic.AtomicInteger
 
 trait ExecutionRules extends SymbolicExecutionRules {
@@ -270,8 +273,9 @@ object executor extends ExecutionRules {
              *   - Execute the statements in the loop head block
              *   - Follow the outgoing edges
              */
-            val sepIdentifier = v.symbExLog.openScope(new LoopInRecord(invs.head, s, v.decider.pcs))
-            v.symbExLog.populateSnaps(s.h.values.toSeq, s, invs.head)
+            val inv: Exp = if (invs.nonEmpty) { invs.head } else { TrueLit()() }
+            val sepIdentifier = v.symbExLog.openScope(new LoopInRecord(inv, s, v.decider.pcs))
+            v.symbExLog.populateSnaps(s.h.values.toSeq, s, inv)
 
             /* Havoc local variables that are assigned to in the loop body */
             val wvs = sLocal.methodCfg.writtenVars(block)
@@ -412,11 +416,13 @@ object executor extends ExecutionRules {
         Q(s1, v)
 
       case ast.LocalVarDeclStmt(decl) =>
+        v.symbExLog.registerVariable(decl)
         val x = decl.localVar
         val (t, newExp) = v.decider.fresh(x)
         Q(s.copy(g = s.g + (x -> (t, newExp))), v)
 
       case ass @ ast.LocalVarAssign(x, rhs) =>
+        v.symbExLog.registerVariable(x)
         eval(s, rhs, AssignmentFailed(ass), v)((s1, tRhs, rhsNew, v1) => {
           val (t, e) = ssaifyRhs(tRhs, rhs, rhsNew, x.name, x.typ, v, s1)
           Q(s1.copy(g = s1.g + (x, (t, e))), v1)})
@@ -438,6 +444,7 @@ object executor extends ExecutionRules {
         })
 
       case stmt@ast.NewStmt(x, fields) =>
+        v.symbExLog.registerVariable(x)
         val (tRcvr, eRcvrNew) = v.decider.fresh(x)
         val debugExp = Option.when(withExp)(ast.NeCmp(x, ast.NullLit()())())
         val debugExpSubst = Option.when(withExp)(ast.NeCmp(eRcvrNew.get, ast.NullLit()())())
@@ -549,6 +556,9 @@ object executor extends ExecutionRules {
 
       case call @ ast.MethodCall(methodName, eArgs, lhs) =>
         val meth = s.program.findMethod(methodName)
+        meth.formalArgs.foreach(v.symbExLog.registerVariable)
+        meth.formalReturns.foreach(v.symbExLog.registerVariable)
+        lhs.foreach(v.symbExLog.registerVariable)
         val fargs = meth.formalArgs.map(_.localVar)
         val formalsToActuals: Map[ast.LocalVar, ast.Exp] = fargs.zip(eArgs).to(Map)
         val reasonTransformer = (n: viper.silver.verifier.errors.ErrorNode) => n.replace(formalsToActuals)
@@ -720,7 +730,14 @@ object executor extends ExecutionRules {
             (None, None)
          }
          v.decider.assumeDefinition(BuiltinEquals(t, rhs), debugExp)
-         v.symbExLog.freshTerms += t -> rhs
+         // Gobra's awful intermediate variables
+         if (SymbExLogger.isBigNVar(t) && SymbExLogger.isFreshNameVar(rhs)) {
+           v.symbExLog.freshTerms += rhs -> t
+         } else if (SymbExLogger.isBigNVar(rhs) || SymbExLogger.isFreshNameVar(rhs)) {
+           v.symbExLog.freshTerms += rhs -> t
+         } else {
+           v.symbExLog.freshTerms += t -> rhs
+         }
          (t, eNew)
      }
    }
